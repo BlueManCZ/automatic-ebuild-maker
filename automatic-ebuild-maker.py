@@ -4,13 +4,566 @@ from datetime import date
 from glob import glob
 from json import load
 from optparse import OptionParser
+from os import mkdir, path
+from re import sub
 from signal import signal, SIGINT
+from sys import stdout
+from wget import download
 
-import os
-import sys
 import tarfile
 import unix_ar
-import wget
+
+CACHE_DIR = '/tmp/automatic-ebuild-maker-cache/'
+
+
+class Deb:
+    """Class representing .deb file"""
+    url = ''
+    cache_dir = ''
+    location = ''
+    filename = ''
+    architecture = ''
+
+    ARCHIVES = ['control.tar.gz', 'data.tar.xz']
+
+    def __init__(self, url, cache_directory=CACHE_DIR, arch=''):
+        if url:
+            self.url = url
+            self.cache_dir = cache_directory
+            self.filename = url.split('/')[-1]
+            self.dirname = self.filename.split('/')[-1].replace('.', '-')
+            self.extract_location = self.cache_dir + self.dirname
+        self.architecture = arch
+
+    def is_downloaded(self):
+        if not self.filename:
+            return False
+        return path.isfile(self.cache_dir + self.filename)
+
+    def download(self):
+        if self.filename:
+            print_bold(f'\nDownloading target file to {self.cache_dir + self.filename}\n')
+            print(f'{self.url}\n')
+            self.location = download(self.url, self.cache_dir + self.filename)
+            print('\n')
+
+    def is_extracted(self):
+        return path.isdir(self.cache_dir + self.dirname)
+
+    def extract(self):
+        if self.is_downloaded():
+            print_bold(f'\nFile {self.filename} already downloaded in cache.')
+            self.location = self.cache_dir + self.filename
+            print(f'{self.location}\n')
+        else:
+            self.download()
+
+        ar_file = unix_ar.open(self.location)
+
+        for archive in self.ARCHIVES:
+            print(f'Extracting {archive}', end=' ')
+            stdout.flush()
+            folder = archive.split(".")[0]
+            if path.isdir(f'{self.extract_location}/{folder}'):
+                print('[already extracted]')
+            else:
+                state = ''
+                for info in ar_file.infolist():
+                    if info.name.decode('utf-8') in [f'{archive}', f'{archive}/']:
+                        tarball = ar_file.open(info.name.decode('utf-8'))
+                        tar_file = tarfile.open(fileobj=tarball)
+                        tar_file.extractall(f'{self.extract_location}/{folder}')
+                        print('[done]')
+                        state = 'ok'
+                        break
+
+                if not state:
+                    print_warning('[failed]')
+                    quit()
+
+    def get_control_data(self):
+        if self.is_extracted():
+            print_bold(f'\nFile {self.filename} already extracted in cache.')
+            print(f'{self.extract_location}\n')
+        else:
+            self.extract()
+
+        data = {}
+        with open(self.extract_location + '/control/control') as control_file:
+            line = control_file.readline()
+            while line:
+                key, value = line.split(': ', 1)
+                if key == 'Description':
+                    long_description = ''.join(control_file.readlines()).replace('  ', '').replace('\n', '')
+                    if long_description:
+                        data['Long description'] = long_description
+
+                    inline_description = value.replace('\n', '')
+                    if inline_description:
+                        data[key] = inline_description
+                    else:
+                        data[key] = long_description
+
+                else:
+                    data[key] = value.replace('\n', '')
+
+                line = control_file.readline()
+
+        dependencies = []
+        if 'Depends' in data:
+            dependencies += data['Depends'].split(', ')
+        if 'Recommends' in data:
+            dependencies += data['Recommends'].split(', ')
+            data.pop('Recommends')
+        if 'Suggests' in data:
+            dependencies += data['Suggests'].split(', ')
+            data.pop('Suggests')
+        data['Depends'] = dependencies
+
+        if 'Architecture' in data:
+            self.architecture = data['Architecture']
+
+        return data
+
+
+class Ebuild:
+    """Class representing .ebuild file"""
+    package = ''
+    version = ''
+
+    eapi = 7
+    inherit = []
+    description = ''
+    long_description = ''
+    homepage = ''
+    src_uri = {}
+    license = ''
+    slot = 0
+    restrict = ['bindist', 'mirror']
+    use_flags = []
+    tmp_use_flags = []
+    deb_dependencies = []
+    dependencies = []
+    use_dependencies = {}
+
+    postinst = []
+    postrm = []
+
+    root = ''
+    native_bin = ''
+
+    unnecessary_files = {}
+    desktop_files = []
+    doc_directory = ''
+    archives_in_doc_directory = []
+    potencial_run_files = []
+
+    deb_files = []
+    deb_data = []
+
+    def __init__(self, *_, deb_files: [Deb] = None):
+
+        if deb_files:
+            # Making ebuild from .deb
+
+            self.deb_files = deb_files
+            deb_file = deb_files[0]
+            data = deb_file.get_control_data()
+            self.deb_data = data
+            self.inherit.append('unpacker')
+
+            if 'Package' in data:
+                self.package = data['Package']
+            else:
+                self.package = 'unknown'
+                warnings.append(f'Package name not found. Using "{self.version}" instead.')
+
+            if 'Version' in data:
+                self.version = data['Version'].split('-')[0]
+            else:
+                self.version = '1.0.0'
+                warnings.append(f'Package version not found. Using "{self.version}" instead.')
+
+            if 'Homepage' in data:
+                self.homepage = data['Homepage']
+            else:
+                warnings.append('Package homepage is missing.')
+
+            if 'License' in data:
+                self.license = data['License'].replace('v', '-')
+            else:
+                warnings.append('Package license is missing.')
+
+            if 'Description' in data:
+                self.description = data['Description']
+            else:
+                warnings.append('Package description is missing.')
+
+            if 'Long description' in data:
+                self.long_description = data['Long description']
+            else:
+                warnings.append('Package long description is missing.')
+
+            self.root = deb_file.extract_location + '/data/'
+
+            if options.system_ffmpeg:
+                self.tmp_use_flags.append('system-ffmpeg')
+
+            if options.system_mesa:
+                self.tmp_use_flags.append('system-mesa')
+
+            self.parse_dependencies_from_deb()
+            self.update_unnecessary_files()
+            self.update_desktop_files()
+            self.update_doc_directory()
+            self.update_archives_in_directory(self.doc_directory)
+            self.update_potencial_run_files()
+            # self.update_use_dependencies()
+
+    def name(self):
+        return f'{self.package.replace(".", "-")}-{self.version}.ebuild'
+
+    def add_deb_file(self, deb_file):
+        if deb_file not in self.deb_files:
+            self.deb_files.append(deb_file)
+
+    def add_use_flag(self, use):
+        if use not in self.use_flags:
+            self.use_flags.append(use)
+            self.use_flags.sort()
+
+    def get_architectures(self):
+        return list(self.get_src_uris().keys())
+
+    def get_src_uris(self):
+        uris = {}
+
+        if self.deb_files:
+            for deb in self.deb_files:
+                arch = deb.architecture
+                if arch:
+                    uris[arch] = deb.url
+        return uris
+
+    def parse_dependencies_from_deb(self):
+        deb_dependencies = self.deb_data['Depends']
+        dependencies = []
+
+        def cut_version(depencency):
+            return sub(r' \(.*\)', '', depencency)
+
+        for dep in deb_dependencies:
+            if '|' in dep:
+                multi_dep = dep.split(' | ')
+                for i in range(len(multi_dep)):
+                    multi_dep[i] = cut_version(multi_dep[i])
+                dependencies.append(multi_dep)
+                continue
+            dependencies.append(cut_version(dep))
+        self.deb_dependencies = dependencies
+
+    def convert_dependencies(self, dependencies):
+
+        def convert_dependency(d):
+            if d in database['dependencies']:
+                return database['dependencies'][d], False
+            if d in database['dependencies-optional']:
+                dep_use = database['dependencies-optional'][d]
+                return database['use-dependencies'][dep_use], dep_use
+            return False, False
+
+        result = []
+        for dep in dependencies:
+            if isinstance(dep, list):
+                converted = self.convert_dependencies(dep)
+                if len(converted) > 1:
+                    result.append(converted)
+                else:
+                    result += converted
+            else:
+                converted = convert_dependency(dep)
+                if converted[0]:
+                    if converted not in result:
+                        result.append(converted)
+                else:
+                    warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
+        return result
+
+    def build_dependencies_string_2(self):
+        dependencies = self.convert_dependencies(self.deb_dependencies)
+
+        normal_dependencies = []
+        multi_dependencies = []
+        use_dependencies = {}
+
+        for dep in dependencies:
+            if isinstance(dep, list):
+                dep.sort()
+                multi_dependencies.append(dep)
+            else:
+                if dep[1]:
+                    use_dependencies[dep[1]] = dep[0]
+                    self.add_use_flag(dep[1])
+                else:
+                    normal_dependencies.append(dep[0])
+
+        for use in self.tmp_use_flags:
+            if use in database['use-dependencies']:
+                use_dependencies[use] = database['use-dependencies'][use]
+
+        normal_dependencies.sort()
+        multi_dependencies.sort()
+
+        string = ''
+        c = 0
+        for dep in normal_dependencies:
+            string += ("" if c == 0 else "\n\t") + f'{dep}'
+            c += 1
+
+        keys = list(use_dependencies.keys())
+        keys.sort()
+
+        for use in keys:
+            string += ("" if c == 0 else "\n\t") + f'{use}? ( {use_dependencies[use]} )'
+            c += 1
+
+        for group in multi_dependencies:
+            string += ("" if c == 0 else "\n\t") + '|| ('
+            for dep in group:
+                if dep[1]:
+                    string += f'\n\t\t{dep[1]}? ( {dep[0]} )'
+                else:
+                    string += f'\n\t\t{dep[0]}'
+            string += f'\n\t)'
+            c += 1
+
+        return string
+
+    # def update_dependencies_from_deb(self):
+    #     deb_dependencies = self.deb_data['Depends']
+    #     for dep in deb_dependencies:
+    #         if '|' in dep:
+    #             state = ''
+    #             for sp_dep in dep.split(' | '):
+    #                 if sp_dep in database['dependencies-optional']:
+    #                     self.add_use_flag(database['dependencies-optional'][sp_dep])
+    #                     state = 'ok'
+    #                 elif sp_dep in database['dependencies']:
+    #                     if database['dependencies'][sp_dep] not in self.dependencies:
+    #                         self.dependencies.append(database['dependencies'][sp_dep])
+    #                         state = 'ok'
+    #             if not state:
+    #                 warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
+    #
+    #         elif dep in database['dependencies-optional']:
+    #             self.add_use_flag(database['dependencies-optional'][dep])
+    #
+    #         elif dep in database['dependencies']:
+    #             if database['dependencies'][dep] not in self.dependencies:
+    #                 self.dependencies.append(database['dependencies'][dep])
+    #         else:
+    #             warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
+    #
+    #     self.dependencies.sort()
+
+    def update_unnecessary_files(self):
+        for use in self.tmp_use_flags:
+            if use in database['unnecessary-files']:
+                files = database['unnecessary-files'][use]
+                found = []
+                for unnecessary_file in files:
+                    found += find_files(self.root, f'**/{unnecessary_file}')
+                tmp = []
+                for f1 in found:
+                    state = True
+                    for f2 in found:
+                        if f2 in f1 and f1 != f2:
+                            state = False
+                    if state:
+                        tmp.append(f1)
+                if tmp:
+                    # tmp.sort()
+                    self.unnecessary_files[use] = tmp
+                    self.add_use_flag(use)
+
+    def update_desktop_files(self):
+        self.desktop_files = find_files(self.root, '**/*.desktop')
+        if self.desktop_files:
+            self.inherit.append('xdg')
+        else:
+            warnings.append('No desktop files found.')
+
+    def update_doc_directory(self):
+        found = find_files(self.root, 'usr/share/doc/*')
+        if found:
+            self.doc_directory = found[0]
+            if self.doc_directory:
+                self.add_use_flag('doc')
+
+    def update_archives_in_directory(self, directory):
+        found = find_files(self.root + directory + '/', '**/*.gz')
+        for item in found:
+            self.archives_in_doc_directory.append(directory + '/' + item)
+
+    def update_potencial_run_files(self):
+        if self.desktop_files:
+            for desktop_file in self.desktop_files:
+                with open(self.root + desktop_file) as desktop:
+                    lines = desktop.readlines()
+                for line in lines:
+                    if 'Exec=' in line:
+                        command = line.replace('Exec=', '').replace('\n', '').split(' ')[0]
+                        if len(command.split('/')) > 1:
+                            if command[0] == '/':
+                                command = command[1:]
+                            self.potencial_run_files.append(command)
+                            if 'usr/bin' in command:
+                                self.native_bin = command
+            if self.potencial_run_files:
+                return
+
+        patterns = [self.package,
+                    self.package.capitalize(),
+                    self.package.replace('-desktop', ''),
+                    self.package.replace('-desktop', '').capitalize()]
+
+        for pattern in patterns:
+            tmp = find_files(self.root, f'**/{pattern}')
+            for item in tmp:
+                if item not in self.potencial_run_files and path.isfile(self.root + item):
+                    self.potencial_run_files.append(item)
+                    if 'usr/bin' in item:
+                        self.native_bin = item
+
+        if not self.native_bin and not self.potencial_run_files:
+            warnings.append('No executable files found.')
+
+    # def update_use_dependencies(self):
+    #     for use in self.use_flags:
+    #         if use in database['use-dependencies']:
+    #             self.use_dependencies[use] = database['use-dependencies'][use]
+
+    def build_src_uri_string(self):
+        pv = '${PV}'
+
+        src_uri_string = ''
+
+        counter = 0
+        src_uris = self.get_src_uris()
+        for arch in src_uris:
+            suffix = src_uris[arch].split('.')[-1]
+            url = src_uris[arch].replace(self.version, pv)
+            keyword = arch
+            if keyword == 'i386' or keyword == 'i686':
+                keyword = 'x86'
+            if counter == 0:
+                if len(src_uris) == 1:
+                    src_uri_string = f'{url} -> {self.package}-{pv}.{suffix}'
+                else:
+                    src_uri_string += f'{keyword}? ( {url} -> {self.package}-{pv}-{arch}.{suffix} )'
+            else:
+                src_uri_string += f'\n\t{keyword}? ( {url} -> {self.package}-{pv}-{arch}.{suffix} )'
+            counter += 1
+        return src_uri_string
+
+    def build_keywords_string(self):
+        string = '-* ~' + ' ~'.join(self.get_architectures())
+        string = string.replace('i386', 'x86')
+        return string.replace('i686', 'x86')
+
+    # def build_dependencies_string(self):
+    #     string = ''
+    #     counter = 0
+    #     for dep in self.dependencies:
+    #         if counter == 0:
+    #             string += f'{dep}'
+    #         else:
+    #             string += f'\n\t{dep}'
+    #         counter += 1
+    #
+    #     for use in self.use_dependencies:
+    #         string += f'\n\t{use}? ( {self.use_dependencies[use]} )'
+    #     return string
+
+    def build_src_prepare_string(self):
+        result = ''
+
+        if self.archives_in_doc_directory and 'doc' in self.use_flags:
+            result += f'\n\tif use doc ; then\n'
+            for archive in self.archives_in_doc_directory:
+                result += f'\t\tunpack "{archive}" || die "unpack failed"\n'
+                result += f'\t\trm -f "{archive}" || die "rm failed"\n'
+                extracted_location = ".".join(archive.split("/")[-1].split(".")[:-1])
+                target_location = '/'.join(archive.split('/')[:-1])
+                result += f'\t\tmv "{extracted_location}" "{target_location}" || die "mv failed"\n'
+            result += '\tfi\n'
+
+        if self.unnecessary_files:
+            for use in self.unnecessary_files:
+                result += f'\n\tif use {use} ; then\n'
+                for f in self.unnecessary_files[use]:
+                    result += f'\t\trm -f{"r" if path.isdir(self.root + f) else " "} "{f}" || die "rm failed"\n'
+                result += '\tfi\n'
+
+        return result
+
+    def build_src_install_string(self):
+        result = ''
+
+        result += '\tcp -a . "${ED}" || die "cp failed"'
+
+        if self.doc_directory:
+            ed = "${ED}"
+            result += f'\n\n\trm -r "{ed}/{self.doc_directory}" || die "rm failed"'
+
+        if self.doc_directory:
+            result += '\n\n\tif use doc ; then\n'
+            result += f'\t\tdodoc -r "{self.doc_directory}/"* || die "dodoc failed"\n'
+            result += '\tfi'
+
+        if self.unnecessary_files:
+            for use in self.unnecessary_files:
+                if use in database["use-symlinks"]:
+                    result += f'\n\n\tif use {use} ; then\n'
+                    for f in self.unnecessary_files[use]:
+                        result += f'\t\tdosym \"{database["use-symlinks"][use]}\" \"/{f}\" || die "dosym failed"\n'
+                    result += '\tfi'
+
+        if not self.native_bin and self.potencial_run_files:
+            result += '\n\n'
+            exe = self.potencial_run_files[0]
+            result += f'\tdosym "/{exe}" "/usr/bin/{ebuild.package}" || die "dosym failed"'
+
+        return result
+
+    # def build_pkg_postinst_string(self):
+    #     result = ''
+    #
+    #     if self.root and self.desktop_files:
+    #         result += '\txdg_icon_cache_update\n'
+    #         result += '\txdg_desktop_database_update'
+    #
+    #         for desktop in self.desktop_files:
+    #             with open(self.root + desktop) as file:
+    #                 content = file.read()
+    #                 if 'MimeType' in content:
+    #                     result += '\n\txdg_mimeinfo_database_update'
+    #
+    #     return result
+    #
+    # def build_pkg_postrm_string(self):
+    #     result = ''
+    #
+    #     if self.root and self.desktop_files:
+    #         result += '\txdg_desktop_database_update'
+    #
+    #         for desktop in self.desktop_files:
+    #             with open(self.root + desktop) as file:
+    #                 content = file.read()
+    #                 if 'MimeType' in content:
+    #                     result += '\n\txdg_mimeinfo_database_update'
+    #
+    #     return result
 
 
 class Colors:
@@ -40,10 +593,26 @@ def print_bold(string):
     print(Colors.BOLD + string + Colors.ENDC)
 
 
+def print_ok(string):
+    """Print function that prints green text."""
+    print(Colors.OKGREEN + string + Colors.ENDC)
+
+
 def quit_handler(_, __):
     """Handler for exit signal."""
     print('\nSIGINT or CTRL-C detected. Exiting')
     quit()
+
+
+def find_files(root, pattern, cut_root=True):
+    result = []
+    found = glob(root + pattern, recursive=True)
+    for item in found:
+        if cut_root:
+            result.append(item.replace(root, ''))
+        else:
+            result.append(item)
+    return result
 
 
 if __name__ == '__main__':
@@ -52,28 +621,33 @@ if __name__ == '__main__':
 
     parser = OptionParser()
 
-    parser.add_option('', '--disable-system-ffmpeg',
-                      action='store_true', dest='disable_system_ffmpeg', default=False,
-                      help='don\'t include system-ffmpeg USE flag to the ebuild')
+    parser.add_option('', '--system-ffmpeg',
+                      action='store_true', dest='system_ffmpeg', default=False,
+                      help='Try to include system-ffmpeg USE flag to the ebuild')
+    parser.add_option('', '--system-mesa',
+                      action='store_true', dest='system_mesa', default=False,
+                      help='Try to include system-mesa USE flag to the ebuild')
     parser.add_option('-v', '--verbose',
                       action='store_true', dest='verbose', default=False,
                       help='run script in verbose mode')
     parser.add_option('-u', '--url', dest='url',
                       help='specify input package file url',
-                      metavar='<package>')
+                      metavar='<package_url>')
 
-    parser.add_option('', '--amd64',  action='store_true', dest='amd64',
-                      default=False, help='package is available as amd64 <arch>')
+    parser.add_option('', '--amd64', action='store_true', dest='amd64',
+                      default=False, help='package is available for amd64 <arch>')
     parser.add_option('', '--i386', action='store_true', dest='i386',
-                      default=False, help='package is available as i386 <arch>')
+                      default=False, help='package is available for i386 <arch>')
+    parser.add_option('', '--i686', action='store_true', dest='i686',
+                      default=False, help='package is available for i686 <arch>')
 
     (options, args) = parser.parse_args()
 
     # Set constant variables
 
-    REAL_PATH = os.path.dirname(os.path.realpath(__file__))
-    CACHE_DIR = '/tmp/automatic-ebuild-maker-cache/'
+    REAL_PATH = path.dirname(path.realpath(__file__))
     DATABASE_FILE = REAL_PATH + '/database.json'
+    TEMPLATES_DIR = REAL_PATH + '/templates/'
 
     if not options.url:
         print_warning('Input file not specifed. Please, use --input flag.')
@@ -84,432 +658,125 @@ if __name__ == '__main__':
         print_warning('Input file has to be specifed by URL adress.')
         quit()
 
-    suffix = options.url.split('.')[-1]
-
     architectures = []
     if options.amd64:
         architectures.append('amd64')
     if options.i386:
         architectures.append('i386')
+    if options.i686:
+        architectures.append('i686')
 
-    # if os.path.isfile(options.input_specified):
-    #     verbose_print('[ok] Specified input file found:')
-    #     verbose_print('   - %s\n' % options.input_specified)
-    # else:
-    #     print_warning('[error] Specified input file %s not found.' % options.input_specified)
-    #     quit()
+    if not path.isdir(CACHE_DIR):
+        try:
+            mkdir(CACHE_DIR)
+        except OSError:
+            print_warning(f'[error] Creation of the directory failed!')
+            print('   -', CACHE_DIR)
+            quit()
 
-    if suffix == 'deb':
-        if not os.path.isdir(CACHE_DIR):
-            try:
-                os.mkdir(CACHE_DIR)
-            except OSError:
-                print_warning('[error] Creation of the directory failed!')
-                print('   -', CACHE_DIR)
-                quit()
+    file_suffix = options.url.split('.')[-1]
+    if file_suffix == 'deb':
 
         src_uri = {}
 
         if '@ARCH@' in options.url:
             if architectures:
-                for arch in architectures:
-                    src_uri[arch] = options.url.replace('@ARCH@', arch)
+                for architecture in architectures:
+                    src_uri[architecture] = options.url.replace('@ARCH@', architecture)
                 options.url = src_uri[architectures[0]]
             else:
                 print_warning('[error] You have to provide at least one architecture when using @ARCH@ in url')
                 quit()
 
-        print(src_uri)
-
-        target = options.url.split("/")[-1]
-        filename = CACHE_DIR + target
-
-        if os.path.isfile(filename):
-            verbose_print('\nFile already downloaded in cache.')
-        else:
-            print_bold(f'\nDownloading target file to {filename}\n')
-            print(f'{options.url}\n')
-            wget.download(options.url, filename)
-            print()
-
-        dirname = filename.split('/')[-1].replace('.', '-')
-
-        ar_file = unix_ar.open(filename)
-
-        print()
-        for file in ['control.tar.gz', 'data.tar.xz']:
-            print(f'Extracting {file}', end=' ')
-            sys.stdout.flush()
-            name = file.split(".")[0]
-            if os.path.isdir(f'{CACHE_DIR}{dirname}/{name}'):
-                print('[already extracted]')
-            else:
-                status = ''
-                for info in ar_file.infolist():
-                    if info.name.decode('utf-8') in [f'{file}', f'{file}/']:
-                        tarball = ar_file.open(info.name.decode('utf-8'))
-                        tar_file = tarfile.open(fileobj=tarball)
-                        tar_file.extractall(f'{CACHE_DIR}{dirname}/{name}')
-                        print('[done]')
-                        status = 'ok'
-                        break
-
-                if not status:
-                    print_warning('[failed]')
-                    quit()
-
-        data = {}
-        with open(CACHE_DIR + dirname + '/control/control') as file:
-            line = file.readline()
-            while line:
-                key, value = line.split(': ', 1)
-                description = []
-                if key == 'Description':
-                    description.append(value.replace('\n', ''))
-                    description += file.readlines()
-                    data[key] = description
-                else:
-                    data[key] = value.replace('\n', '')
-
-                line = file.readline()
-
         warnings = []
-        dependencies = []
-        dependencies_string = ''
 
-        # Find unnecessary files and replace them with dependencies
-        use_dependencies = {}
-        use_rm_files = {}
-
-        swiftshader = glob(f'{CACHE_DIR}{dirname}/data/**/libEGL.so', recursive=True)
-        swiftshader += glob(f'{CACHE_DIR}{dirname}/data/**/libGLESv2.so', recursive=True)
-        swiftshader += glob(f'{CACHE_DIR}{dirname}/data/**/libvk_swiftshader.so', recursive=True)
-        swiftshader += glob(f'{CACHE_DIR}{dirname}/data/**/libvulkan.so', recursive=True)
-
-        ffmpeg = []
-        if not options.disable_system_ffmpeg:
-            ffmpeg = glob(f'{CACHE_DIR}{dirname}/data/**/libffmpeg.so', recursive=True)
-
-        desktop = glob(f'{CACHE_DIR}{dirname}/data/**/*.desktop', recursive=True)
-
-        pkg_postinst = []
-        pkg_postrm = []
-
-        if desktop:
-            pkg_postinst.append('xdg_icon_cache_update')
-            pkg_postinst.append('xdg_desktop_database_update')
-            pkg_postrm.append('xdg_desktop_database_update')
-
-        for d in desktop:
-            with open(d) as file:
-                content = file.read()
-                if 'MimeType' in content:
-                    pkg_postinst.append('xdg_mimeinfo_database_update')
-                    pkg_postrm.append('xdg_mimeinfo_database_update')
-
-        doc = glob(f'{CACHE_DIR}{dirname}/data/**/doc/*', recursive=True)
-
-        doc_files = []
-
-        for d in doc:
-            doc_files.append(d.replace(f'{CACHE_DIR}{dirname}/data/', ''))
-
-        doc_archives = []
-        for d in doc:
-            doc_archives += glob(f'{d}/**/*.gz', recursive=True)
-
-        doc_archives_short = []
-        for doc in doc_archives:
-            doc_archives_short.append(doc.replace(f'{CACHE_DIR}{dirname}/data/', ''))
-
-        print(doc_archives_short)
-
-        executable_tmp = glob(f'{CACHE_DIR}{dirname}/data/**/{data["Package"]}', recursive=True)
-        executable_tmp += glob(f'{CACHE_DIR}{dirname}/data/**/{data["Package"].capitalize()}', recursive=True)
-        native_bin = ''
-
-        for exe in executable_tmp:
-            if 'usr' in exe and 'bin' in exe:
-                native_bin = exe
-
-        executable = []
-
-        for exe in executable_tmp:
-            skip = False
-            for exe2 in executable_tmp:
-                if (exe in exe2 and exe != exe2) or ('/opt/' not in exe
-                                                     and f'/usr/share/{data["Package"]}' not in exe
-                                                     and f'/usr/share/{data["Package"].capitalize()}' not in exe):
-                    skip = True
-                    break
-            if skip:
-                continue
-            executable.append(exe.replace(f'{CACHE_DIR}{dirname}/data', ''))
-
-        location = glob(f'{CACHE_DIR}{dirname}/data/opt')
-        if not location:
-            location = glob(f'{CACHE_DIR}{dirname}/data/usr')
-        if location:
-            location = location[0].replace(f'{CACHE_DIR}{dirname}/data', '')
-
-        root_folders_tmp = glob(f'{CACHE_DIR}{dirname}/data/*')
-        root_folders = []
-
-        for folder in root_folders_tmp:
-            root_folders.append(folder.replace(f'{CACHE_DIR}{dirname}/data/', ''))
-
-        trash = {'system-mesa': swiftshader, 'system-ffmpeg': ffmpeg}
-        trash_keys = list(trash.keys())
-        trash_keys.sort()
-
-        use_flags = []
-
-        if os.path.isfile(DATABASE_FILE):
-            if 'Homepage' not in data:
-                data['Homepage'] = ''
-                warnings.append('Homepage is missing.')
-
-            if 'License' in data:
-                if data['License'] in ['', 'unknown']:
-                    warnings.append(f'License is currently set to \"{data["License"]}\".')
-            else:
-                data['License'] = ''
-                warnings.append('License is missing.')
-
+        if path.isfile(DATABASE_FILE):
             verbose_print('\n[ok] Found database file:')
-            verbose_print('   - %s\n' % DATABASE_FILE)
+            verbose_print('   - %s' % DATABASE_FILE)
             with open(DATABASE_FILE) as json_file:
                 database = load(json_file)
-
-            # Get dependencies from .deb control file
-            deb_dependencies = []
-            if 'Depends' in data:
-                deb_dependencies += data['Depends'].split(', ')
-            if 'Suggests' in data:
-                deb_dependencies += data['Suggests'].split(', ')
-
-            for d in deb_dependencies:
-                if '|' in d:
-                    status = ''
-                    for dd in d.split(' | '):
-                        if dd in database['dependencies-optional']:
-                            use_flags.append(database['dependencies-optional'][dd])
-                            status = 'ok'
-                        elif dd in database['dependencies']:
-                            if database['dependencies'][dd] not in dependencies:
-                                dependencies.append(database['dependencies'][dd])
-                                status = 'ok'
-                    if not status:
-                        warnings.append(f'Gentoo alternative dependency for \"{d}\" not found in database.json.')
-
-                elif d in database['dependencies-optional']:
-                    use_flags.append(database['dependencies-optional'][d])
-
-                elif d in database['dependencies']:
-                    if database['dependencies'][d] not in dependencies:
-                        dependencies.append(database['dependencies'][d])
-
-                else:
-                    warnings.append(f'Gentoo alternative dependency for \"{d}\" not found in database.json.')
-
-            dependencies.sort()
-
-            counter = 0
-            for d in dependencies:
-                if counter == 0:
-                    if len(dependencies) == 1:
-                        dependencies_string += f'{d}'
-                    else:
-                        dependencies_string += f'{d}\n'
-                elif counter == len(dependencies) - 1:
-                    dependencies_string += f'\t{d}'
-                else:
-                    dependencies_string += f'\t{d}\n'
-                counter += 1
-
-            for use in trash_keys:
-                if trash[use]:
-                    trash[use].sort()
-                    use_dependencies[use] = database['use-dependencies'][use]
-                    use_rm_files[use] = []
-                    for path in trash[use]:
-                        use_rm_files[use].append(path.replace(f'{CACHE_DIR}{dirname}/data/', ''))
-
         else:
-            print_warning('[warning] database file %s not found.' % DATABASE_FILE)
+            print_warning('[warning] Database file not found.')
+            database = {}
 
-        version = data['Version'].split('-')[0]
-        description = data['Description'][0] if data['Description'][0] else data['Description'][1]
-        description = description.replace('\n', '')
-
-        for i in range(0, len(description)):
-            if description[i] != ' ':
-                description = description[i:]
-                break
-
-        use_flags += list(use_dependencies.keys())
-
-        if doc:
-            use_flags.append('doc')
-
-        use_flags.sort()
-
-        keys = list(use_dependencies.keys())
-        keys.sort()
-
-        for use in use_flags:
-            if use in database['use-dependencies']:
-                dependencies_string += f'\n\t{use}? ( {database["use-dependencies"][use]} )'
-
-        architectures_tmp = architectures
-        architectures = []
-        for arch in architectures_tmp:
-            if arch == 'i386' or args == 'i686':
-                architectures.append('x86')
-            else:
-                architectures.append(arch)
-
-        if architectures:
-            keywords = f'~{" ~".join(architectures)}'
-        else:
-            keywords = f'~{data["Architecture"]}'
-
-        pv = '${PV}'
-        url = options.url.replace(version, pv)
-
-        counter = 0
+        input_files = []
         if src_uri:
-            src_uri_string = ''
-            for arch in src_uri:
-                url = src_uri[arch].replace(version, pv)
-                keyword = arch
-                if keyword == 'i386' or keyword == 'i686':
-                    keyword = 'x86'
-                if counter == 0:
-                    if len(src_uri) == 1:
-                        src_uri_string = f'{keyword} -> {data["Package"]}-{pv}.{suffix}'
-                    else:
-                        src_uri_string += f'{keyword}? ( {url} -> {data["Package"]}-{pv}-{arch}.{suffix} )\n'
-                elif counter == len(src_uri) - 1:
-                    src_uri_string += f'\t{keyword}? ( {url} -> {data["Package"]}-{pv}-{arch}.{suffix} )'
-                else:
-                    src_uri_string += f'\t{keyword}? ( {url} -> {data["Package"]}-{pv}-{arch}.{suffix} )\n'
-                counter += 1
+            for architecture in src_uri:
+                input_files.append(Deb(src_uri[architecture], arch=architecture))
         else:
-            src_uri_string = f'{url} -> {data["Package"]}-{pv}.{suffix}'
+            input_files.append(Deb(options.url))
 
-        file = open(f'{data["Package"]}-{version}.ebuild', 'w')
-        file.writelines([
-            f'# Copyright 1999-{date.today().year} Gentoo Authors\n'
-            '# Distributed under the terms of the GNU General Public License v2\n\n'
-            '# File was automatically generated by automatic-ebuild-maker\n\n'
-            'EAPI=7\n'
-            'inherit desktop unpacker xdg-utils\n\n'
-            f'DESCRIPTION="{description}"\n'
-            f'HOMEPAGE=\"{data["Homepage"]}\"\n'
-            f'SRC_URI=\"{src_uri_string}\"\n\n'
-            f'LICENSE=\"{data["License"]}\"\n'
-            'SLOT=\"0\"\n'
-            f'KEYWORDS=\"{keywords}\"\n'
-            f'IUSE=\"{" ".join(use_flags)}\"\n\n'
-            f'RDEPEND=\"{dependencies_string}\"\n\n'
-            'QA_PREBUILT="*"\n\n'
-            'S="${WORKDIR}"\n\n'
-        ])
+        ebuild = Ebuild(deb_files=input_files)
+        ebuild.add_deb_file(Deb(options.url))
 
-        # src_prepare()
+        ebuild_data = {
+            '@YEAR@': date.today().year,
+            '@EAPI@': ebuild.eapi,
+            '@INHERIT@': ' '.join(ebuild.inherit),
+            '@DESCRIPTION@': ebuild.description,
+            '@HOMEPAGE@': ebuild.homepage,
+            '@SRC_URI@': ebuild.build_src_uri_string(),
+            '@LICENSE@': ebuild.license,
+            '@SLOT@': ebuild.slot,
+            '@KEYWORDS@': ebuild.build_keywords_string(),
+            '@RESTRICT@': ' '.join(ebuild.restrict),
+            '@RDEPEND@': ebuild.build_dependencies_string_2(),
+            '@IUSE@': ' '.join(ebuild.use_flags),
+            '@QA_PREBUILT@': '*'
+        }
 
-        if use_rm_files or doc_archives_short:
-            file.write('src_prepare() {\n')
-            if use_rm_files:
-                for use in use_rm_files:
-                    file.write(f'\tif use {use} ; then\n')
-                    for f in use_rm_files[use]:
-                        file.write(f'\t\trm -f "{f}" || die "rm failed"\n')
-                    file.write('\tfi\n\n')
-            if doc_archives_short:
-                for doc in doc_archives_short:
-                    file.write(f'\tunpack "{doc}" || die "unpack failed"\n')
-                    file.write(f'\trm -f "{doc}" || die "rm failed"\n')
-                    extracted_location = ".".join(doc.split("/")[-1].split(".")[:-1])
-                    target_location = "/".join(doc.split("/")[:-1])
-                    file.write(f'\tmv "{extracted_location}" "{target_location}"\n')
-                file.write('\n')
-            file.write('\tdefault\n}\n\n')
+        with open(TEMPLATES_DIR + 'template.ebuild') as template:
+            template_content = template.read()
 
-        # src_install()
+        for string_pattern in ebuild_data:
+            template_content = template_content.replace(string_pattern, str(ebuild_data[string_pattern]))
 
-        file.write('src_install() {\n')
+        template_content += '\nS=${WORKDIR}\n'
 
-        # file.write(f'\tinsinto "{location}"\n')
-        file.write('\tcp -a . "${ED}" || die "cp failed"\n\n')
+        src_prepare_string = ebuild.build_src_prepare_string()
 
-        for doc in doc_files:
-            ed = "${ED}"
-            file.write(f'\trm -r "{ed}/{doc}" || die "rm failed"\n')
+        if src_prepare_string:
+            template_content += '\nsrc_prepare() {\n\tdefault\n'
+            template_content += src_prepare_string
+            template_content += '}\n'
 
-        if doc_files:
-            file.write('\n\tif use doc ; then\n')
-            for doc in doc_files:
-                file.write(f'\t\tdodoc -r "{doc}" || die "dodoc failed"\n')
-            file.write('\tfi\n')
+        src_install_string = ebuild.build_src_install_string()
 
-        if use_rm_files:
-            for use in use_rm_files:
-                if use in database["use-symlinks"]:
-                    file.write(f'\n\tif use {use} ; then\n')
-                    for f in use_rm_files[use]:
-                        file.write(f'\t\tdosym \"{database["use-symlinks"][use]}\" \"/{f}\" || die "dosym failed"\n')
-            file.write('\tfi\n')
+        if src_install_string:
+            template_content += '\nsrc_install() {\n'
+            template_content += src_install_string
+            template_content += '\n}\n'
 
-        if not native_bin:
-            file.write('\n')
-            for exe in executable:
-                file.write(f'\tdosym "{exe}" "/usr/bin/{data["Package"]}" || die "dosym failed"\n')
-
-        file.write('}\n\n')
-
-        # pkg_postinst()
-
-        if pkg_postinst:
-            file.write('pkg_postinst() {\n')
-            for command in pkg_postinst:
-                file.write(f'\t{command}\n')
-            file.write('}\n\n')
-
-        # pkg_postrm()
-
-        if pkg_postrm:
-            file.write('pkg_postrm() {\n')
-            for command in pkg_postrm:
-                file.write(f'\t{command}\n')
-            file.write('}\n')
-
-        file.close()
-
-        print_bold(f'File {data["Package"]}-{version}.ebuild created.')
+        ebuild_file = open(ebuild.name(), 'w')
+        ebuild_file.write(template_content)
 
         if warnings:
-            print_warning('\nThings that may require your attention:\n')
+            print_warning('Things that may require your attention:\n')
             for warning in warnings:
                 print_bold(warning)
+            print()
 
-        file = open(f'{data["Package"]}-metadata.xml', 'w')
-        file.writelines([
+        print_ok(f'File {ebuild.name()} created.')
+
+        metdata_file = open(f'{ebuild.package.replace(".", "-")}-metadata.xml', 'w')
+        metdata_file.writelines([
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE pkgmetadata SYSTEM "http://www.gentoo.org/dtd/metadata.dtd">\n'
             '<pkgmetadata>\n'
         ])
 
-        if description:
-            file.write(f'\t<longdescription>\n\t\t{description}\n\t</longdescription>\n')
+        if ebuild.description:
+            metdata_file.write(f'\t<longdescription>\n\t\t{ebuild.long_description or ebuild.description}\n\t'
+                               f'</longdescription>\n')
 
-        if use_flags:
-            file.write('\t<use>\n')
-            for use in use_flags:
-                if use in database['use-descriptions']:
-                    file.write(f'\t\t<flag name="{use}">{database["use-descriptions"][use]}</flag>\n')
-            file.write('\t</use>\n')
+        if ebuild.use_flags:
+            metdata_file.write('\t<use>\n')
+            for use_flag in ebuild.use_flags:
+                if use_flag in database['use-descriptions']:
+                    metdata_file.write(f'\t\t<flag name="{use_flag}">{database["use-descriptions"][use_flag]}</flag>\n')
+            metdata_file.write('\t</use>\n')
 
-        file.write('</pkgmetadata>\n')
-        print(use_flags)
+        metdata_file.write('</pkgmetadata>\n')
+        metdata_file.close()
+
+        print_ok(f'File {ebuild.package.replace(".", "-")}-metadata.xml created.')

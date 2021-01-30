@@ -4,12 +4,14 @@
     "gconf-service": "gnome-base/gconf:2",
     "gir1.2-gnomekeyring-1.0": "gnome-base/gnome-keyring",
     "gvfs-bin": "gnome-base/gvfs",
+    "kde-cli-tools": "kde-plasma/kde-cli-tools",
     "libatspi2.0-0": "app-accessibility/at-spi2-core",
     "libdbus-1-dev": "sys-apps/dbus",
     "libgcrypt11": "dev-libs/libgcrypt",
     "libgcrypt20": "dev-libs/libgcrypt",
     "libglib2.0-bin": "dev-libs/glib:2",
     "libglib2.0-dev": "dev-libs/glib:2",
+    "libgnome-keyring0": "gnome-base/gnome-keyring",
     "libgtk2.0-0": "x11-libs/gtk+:2",
     "libgtk-3-0": "x11-libs/gtk+:3",
     "libnss3": "dev-libs/nss",
@@ -20,25 +22,42 @@
     "libxss1": "x11-libs/libXScrnSaver",
     "libxtst6": "x11-libs/libXtst",
     "libuuid1": "sys-apps/util-linux",
+    "trash-cli": "app-misc/trash-cli",
     "xdg-utils": "x11-misc/xdg-utils"
   },
   "dependencies-optional": {
+    "libasound2": "alsa",
     "libappindicator1": "appindicator",
     "libappindicator3-1": "appindicator",
-    "libnotify4": "libnotify"
+    "libnotify4": "libnotify",
+    "pulseaudio": "pulseaudio"
   },
   "use-dependencies": {
+    "alsa": "media-libs/alsa-lib",
     "appindicator": "dev-libs/libappindicator",
     "libnotify": "x11-libs/libnotify",
+    "pulseaudio": "media-sound/pulseaudio",
     "system-ffmpeg": "<media-video/ffmpeg-4.3[chromium]",
     "system-mesa": "media-libs/mesa"
   },
   "use-descriptions": {
+    "alsa": "Enable alsa support through media-libs/alsa-lib",
     "doc": "Install package documentation",
     "system-ffmpeg": "Use the system-wide media-video/ffmpeg instead of bundled",
     "system-mesa": "Use the system-wide media-libs/mesa instead of bundled"
   },
   "use-symlinks": {
     "system-ffmpeg": "/usr/\"$(get_libdir)\"/chromium/libffmpeg.so"
+  },
+  "unnecessary-files": {
+    "system-ffmpeg": ["libffmpeg.so"],
+    "system-mesa": [
+      "swiftshader",
+      "libEGL.so",
+      "libGLESv2.so",
+      "libvk_swiftshader.so",
+      "libvulkan.so",
+      "vk_swiftshader_icd.json"
+    ]
   }
 }
