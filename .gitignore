@@ -1,3 +1,4 @@
 *.ebuild
+!templates/template.ebuild
 *.xml
 .idea

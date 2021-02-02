@@ -6,7 +6,11 @@
     "gvfs-bin": "gnome-base/gvfs",
     "kde-cli-tools": "kde-plasma/kde-cli-tools",
     "libatspi2.0-0": "app-accessibility/at-spi2-core",
+    "libc6": "sys-libs/glibc",
+    "libcap2": "sys-libs/libcap",
     "libdbus-1-dev": "sys-apps/dbus",
+    "libdrm2": "x11-libs/libdrm",
+    "libgbm1": "media-libs/mesa",
     "libgcrypt11": "dev-libs/libgcrypt",
     "libgcrypt20": "dev-libs/libgcrypt",
     "libglib2.0-bin": "dev-libs/glib:2",
@@ -19,6 +23,7 @@
     "libsecret-1-dev": "app-crypt/libsecret",
     "libudev0": "virtual/libudev",
     "libudev1": "virtual/libudev",
+    "libxcb-dri3-0": "x11-libs/libxcb",
     "libxss1": "x11-libs/libXScrnSaver",
     "libxtst6": "x11-libs/libXtst",
     "libuuid1": "sys-apps/util-linux",
@@ -59,5 +64,11 @@
       "libvulkan.so",
       "vk_swiftshader_icd.json"
     ]
-  }
+  },
+  "deprecated-movable": {
+    "usr/share/appdata": "usr/share/metainfo"
+  },
+  "deprecated-removable": [
+    "etc/cron.daily"
+  ]
 }

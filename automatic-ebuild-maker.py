@@ -24,8 +24,6 @@ class Deb:
     filename = ''
     architecture = ''
 
-    ARCHIVES = ['control.tar.gz', 'data.tar.xz']
-
     def __init__(self, url, cache_directory=CACHE_DIR, arch=''):
         if url:
             self.url = url
@@ -60,26 +58,19 @@ class Deb:
 
         ar_file = unix_ar.open(self.location)
 
-        for archive in self.ARCHIVES:
-            print(f'Extracting {archive}', end=' ')
-            stdout.flush()
-            folder = archive.split(".")[0]
-            if path.isdir(f'{self.extract_location}/{folder}'):
-                print('[already extracted]')
-            else:
-                state = ''
-                for info in ar_file.infolist():
-                    if info.name.decode('utf-8') in [f'{archive}', f'{archive}/']:
-                        tarball = ar_file.open(info.name.decode('utf-8'))
-                        tar_file = tarfile.open(fileobj=tarball)
-                        tar_file.extractall(f'{self.extract_location}/{folder}')
-                        print('[done]')
-                        state = 'ok'
-                        break
-
-                if not state:
-                    print_warning('[failed]')
-                    quit()
+        for info in ar_file.infolist():
+            archive = info.name.decode("utf-8")
+            if '.tar.gz' in archive or '.tar.xz' in archive:
+                print(f'Extracting {archive}', end=' ')
+                stdout.flush()
+                folder = archive.split(".")[0]
+                if path.isdir(f'{self.extract_location}/{folder}'):
+                    print('[already extracted]')
+                else:
+                    tarball = ar_file.open(archive)
+                    tar_file = tarfile.open(fileobj=tarball)
+                    tar_file.extractall(f'{self.extract_location}/{folder}')
+                    print('[done]')
 
     def get_control_data(self):
         if self.is_extracted():
@@ -94,10 +85,11 @@ class Deb:
             while line:
                 key, value = line.split(': ', 1)
                 if key == 'Description':
-                    long_description = ''.join(control_file.readlines()).replace('  ', '').replace('\n', '')
+                    long_description_lines = control_file.readlines()
+                    long_description = ''.join(long_description_lines).replace('  ', '').replace('\n', '')
                     if long_description:
                         data['Long description'] = long_description
-
+                        data['Long description lines'] = long_description_lines
                     inline_description = value.replace('\n', '')
                     if inline_description:
                         data[key] = inline_description
@@ -135,6 +127,7 @@ class Ebuild:
     inherit = []
     description = ''
     long_description = ''
+    long_description_lines = []
     homepage = ''
     src_uri = {}
     license = ''
@@ -153,6 +146,7 @@ class Ebuild:
     native_bin = ''
 
     unnecessary_files = {}
+    deprecate_fixes = {'move': [], 'remove': []}
     desktop_files = []
     doc_directory = ''
     archives_in_doc_directory = []
@@ -184,12 +178,16 @@ class Ebuild:
                 self.version = '1.0.0'
                 warnings.append(f'Package version not found. Using "{self.version}" instead.')
 
-            if 'Homepage' in data:
+            if options.homepage:
+                self.homepage = options.homepage
+            elif 'Homepage' in data:
                 self.homepage = data['Homepage']
             else:
                 warnings.append('Package homepage is missing.')
 
-            if 'License' in data:
+            if options.license:
+                self.license = options.license
+            elif 'License' in data:
                 self.license = data['License'].replace('v', '-')
             else:
                 warnings.append('Package license is missing.')
@@ -203,6 +201,9 @@ class Ebuild:
                 self.long_description = data['Long description']
             else:
                 warnings.append('Package long description is missing.')
+
+            if 'Long description lines' in data:
+                self.long_description_lines = data['Long description lines']
 
             self.root = deb_file.extract_location + '/data/'
 
@@ -218,6 +219,7 @@ class Ebuild:
             self.update_doc_directory()
             self.update_archives_in_directory(self.doc_directory)
             self.update_potencial_run_files()
+            self.update_deprecate_fixes()
             # self.update_use_dependencies()
 
     def name(self):
@@ -289,7 +291,7 @@ class Ebuild:
                     warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
         return result
 
-    def build_dependencies_string_2(self):
+    def build_dependencies_string(self):
         dependencies = self.convert_dependencies(self.deb_dependencies)
 
         normal_dependencies = []
@@ -300,6 +302,9 @@ class Ebuild:
             if isinstance(dep, list):
                 dep.sort()
                 multi_dependencies.append(dep)
+                for d in dep:
+                    if d[1]:
+                        self.add_use_flag(d[1])
             else:
                 if dep[1]:
                     use_dependencies[dep[1]] = dep[0]
@@ -338,33 +343,6 @@ class Ebuild:
             c += 1
 
         return string
-
-    # def update_dependencies_from_deb(self):
-    #     deb_dependencies = self.deb_data['Depends']
-    #     for dep in deb_dependencies:
-    #         if '|' in dep:
-    #             state = ''
-    #             for sp_dep in dep.split(' | '):
-    #                 if sp_dep in database['dependencies-optional']:
-    #                     self.add_use_flag(database['dependencies-optional'][sp_dep])
-    #                     state = 'ok'
-    #                 elif sp_dep in database['dependencies']:
-    #                     if database['dependencies'][sp_dep] not in self.dependencies:
-    #                         self.dependencies.append(database['dependencies'][sp_dep])
-    #                         state = 'ok'
-    #             if not state:
-    #                 warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
-    #
-    #         elif dep in database['dependencies-optional']:
-    #             self.add_use_flag(database['dependencies-optional'][dep])
-    #
-    #         elif dep in database['dependencies']:
-    #             if database['dependencies'][dep] not in self.dependencies:
-    #                 self.dependencies.append(database['dependencies'][dep])
-    #         else:
-    #             warnings.append(f'Gentoo alternative dependency for \"{dep}\" not found in database.json.')
-    #
-    #     self.dependencies.sort()
 
     def update_unnecessary_files(self):
         for use in self.tmp_use_flags:
@@ -438,10 +416,17 @@ class Ebuild:
         if not self.native_bin and not self.potencial_run_files:
             warnings.append('No executable files found.')
 
-    # def update_use_dependencies(self):
-    #     for use in self.use_flags:
-    #         if use in database['use-dependencies']:
-    #             self.use_dependencies[use] = database['use-dependencies'][use]
+    def update_deprecate_fixes(self):
+        for file in database['deprecated-movable']:
+            found = find_files(self.root, file)
+            if found:
+                self.deprecate_fixes['move'].append((file, database['deprecated-movable'][file]))
+        self.deprecate_fixes['move'].sort()
+
+        for file in database['deprecated-removable']:
+            found = find_files(self.root, file)
+            if found:
+                self.deprecate_fixes['remove'].append(file)
 
     def build_src_uri_string(self):
         pv = '${PV}'
@@ -471,20 +456,6 @@ class Ebuild:
         string = string.replace('i386', 'x86')
         return string.replace('i686', 'x86')
 
-    # def build_dependencies_string(self):
-    #     string = ''
-    #     counter = 0
-    #     for dep in self.dependencies:
-    #         if counter == 0:
-    #             string += f'{dep}'
-    #         else:
-    #             string += f'\n\t{dep}'
-    #         counter += 1
-    #
-    #     for use in self.use_dependencies:
-    #         string += f'\n\t{use}? ( {self.use_dependencies[use]} )'
-    #     return string
-
     def build_src_prepare_string(self):
         result = ''
 
@@ -505,6 +476,15 @@ class Ebuild:
                     result += f'\t\trm -f{"r" if path.isdir(self.root + f) else " "} "{f}" || die "rm failed"\n'
                 result += '\tfi\n'
 
+        if self.deprecate_fixes['move']:
+            for fix in self.deprecate_fixes['move']:
+                result += f'\n\tmv "{fix[0]}" "{fix[1]}" || die "mv failed"'
+            result += '\n'
+
+        if self.deprecate_fixes['remove']:
+            for fix in self.deprecate_fixes['remove']:
+                result += f'\n\trm -rf "{fix}" || die "rm failed"'
+            result += '\n'
         return result
 
     def build_src_install_string(self):
@@ -535,35 +515,6 @@ class Ebuild:
             result += f'\tdosym "/{exe}" "/usr/bin/{ebuild.package}" || die "dosym failed"'
 
         return result
-
-    # def build_pkg_postinst_string(self):
-    #     result = ''
-    #
-    #     if self.root and self.desktop_files:
-    #         result += '\txdg_icon_cache_update\n'
-    #         result += '\txdg_desktop_database_update'
-    #
-    #         for desktop in self.desktop_files:
-    #             with open(self.root + desktop) as file:
-    #                 content = file.read()
-    #                 if 'MimeType' in content:
-    #                     result += '\n\txdg_mimeinfo_database_update'
-    #
-    #     return result
-    #
-    # def build_pkg_postrm_string(self):
-    #     result = ''
-    #
-    #     if self.root and self.desktop_files:
-    #         result += '\txdg_desktop_database_update'
-    #
-    #         for desktop in self.desktop_files:
-    #             with open(self.root + desktop) as file:
-    #                 content = file.read()
-    #                 if 'MimeType' in content:
-    #                     result += '\n\txdg_mimeinfo_database_update'
-    #
-    #     return result
 
 
 class Colors:
@@ -630,11 +581,20 @@ if __name__ == '__main__':
     parser.add_option('-v', '--verbose',
                       action='store_true', dest='verbose', default=False,
                       help='run script in verbose mode')
+
     parser.add_option('-u', '--url', dest='url',
                       help='specify input package file url',
-                      metavar='<package_url>')
+                      metavar='SRC_URI')
+    parser.add_option('', '--homepage', dest='homepage',
+                      help='specify ebuild homepage',
+                      metavar='HOMEPAGE')
+    parser.add_option('', '--license', dest='license',
+                      help='specify ebuild license',
+                      metavar='LICENSE')
 
     parser.add_option('', '--amd64', action='store_true', dest='amd64',
+                      default=False, help='package is available for amd64 <arch>')
+    parser.add_option('', '--arm64', action='store_true', dest='arm64',
                       default=False, help='package is available for amd64 <arch>')
     parser.add_option('', '--i386', action='store_true', dest='i386',
                       default=False, help='package is available for i386 <arch>')
@@ -661,6 +621,8 @@ if __name__ == '__main__':
     architectures = []
     if options.amd64:
         architectures.append('amd64')
+    if options.arm64:
+        architectures.append('arm64')
     if options.i386:
         architectures.append('i386')
     if options.i686:
@@ -720,7 +682,7 @@ if __name__ == '__main__':
             '@SLOT@': ebuild.slot,
             '@KEYWORDS@': ebuild.build_keywords_string(),
             '@RESTRICT@': ' '.join(ebuild.restrict),
-            '@RDEPEND@': ebuild.build_dependencies_string_2(),
+            '@RDEPEND@': ebuild.build_dependencies_string(),
             '@IUSE@': ' '.join(ebuild.use_flags),
             '@QA_PREBUILT@': '*'
         }
@@ -765,8 +727,18 @@ if __name__ == '__main__':
             '<pkgmetadata>\n'
         ])
 
-        if ebuild.description:
-            metdata_file.write(f'\t<longdescription>\n\t\t{ebuild.long_description or ebuild.description}\n\t'
+        if ebuild.long_description_lines:
+            metdata_file.write(f'\t<longdescription>')
+            for line in ebuild.long_description_lines:
+                while line[0] == ' ':
+                    line = line[1:]
+                while line[-1] in [' ', '\n']:
+                    line = line[:-1]
+                metdata_file.write(f'\n\t\t{line}')
+            metdata_file.write(f'\n\t</longdescription>\n')
+
+        elif ebuild.description:
+            metdata_file.write(f'\t<longdescription>\n\t\t{ebuild.description}\n\t'
                                f'</longdescription>\n')
 
         if ebuild.use_flags:
