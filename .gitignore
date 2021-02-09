@@ -1,4 +1,5 @@
 *.ebuild
 !templates/template.ebuild
 *.xml
+!templates/metadata.xml
 .idea

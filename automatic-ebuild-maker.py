@@ -671,6 +671,8 @@ if __name__ == '__main__':
         ebuild = Ebuild(deb_files=input_files)
         ebuild.add_deb_file(Deb(options.url))
 
+        # Build .ebuild file
+
         ebuild_data = {
             '@YEAR@': date.today().year,
             '@EAPI@': ebuild.eapi,
@@ -688,67 +690,69 @@ if __name__ == '__main__':
         }
 
         with open(TEMPLATES_DIR + 'template.ebuild') as template:
-            template_content = template.read()
+            ebuild_content = template.read()
 
         for string_pattern in ebuild_data:
-            template_content = template_content.replace(string_pattern, str(ebuild_data[string_pattern]))
+            ebuild_content = ebuild_content.replace(string_pattern, str(ebuild_data[string_pattern]))
 
-        template_content += '\nS=${WORKDIR}\n'
+        ebuild_content += '\nS=${WORKDIR}\n'
 
         src_prepare_string = ebuild.build_src_prepare_string()
 
         if src_prepare_string:
-            template_content += '\nsrc_prepare() {\n\tdefault\n'
-            template_content += src_prepare_string
-            template_content += '}\n'
+            ebuild_content += '\nsrc_prepare() {\n\tdefault\n'
+            ebuild_content += src_prepare_string
+            ebuild_content += '}\n'
 
         src_install_string = ebuild.build_src_install_string()
 
         if src_install_string:
-            template_content += '\nsrc_install() {\n'
-            template_content += src_install_string
-            template_content += '\n}\n'
+            ebuild_content += '\nsrc_install() {\n'
+            ebuild_content += src_install_string
+            ebuild_content += '\n}\n'
 
         ebuild_file = open(ebuild.name(), 'w')
-        ebuild_file.write(template_content)
-
-        if warnings:
-            print_warning('Things that may require your attention:\n')
-            for warning in warnings:
-                print_bold(warning)
-            print()
+        ebuild_file.write(ebuild_content)
 
         print_ok(f'File {ebuild.name()} created.')
 
-        metdata_file = open(f'{ebuild.package.replace(".", "-")}-metadata.xml', 'w')
-        metdata_file.writelines([
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<!DOCTYPE pkgmetadata SYSTEM "http://www.gentoo.org/dtd/metadata.dtd">\n'
-            '<pkgmetadata>\n'
-        ])
+        # Build metadata.xml file
+
+        with open(TEMPLATES_DIR + 'metadata.xml') as template:
+            metadata_content = template.read()
+
+        description = ''
 
         if ebuild.long_description_lines:
-            metdata_file.write(f'\t<longdescription>')
-            for line in ebuild.long_description_lines:
-                while line[0] == ' ':
-                    line = line[1:]
-                while line[-1] in [' ', '\n']:
-                    line = line[:-1]
-                metdata_file.write(f'\n\t\t{line}')
-            metdata_file.write(f'\n\t</longdescription>\n')
+            for des_line in ebuild.long_description_lines:
+                while des_line[0] == ' ':
+                    des_line = des_line[1:]
+                while des_line[-1] in [' ', '\n']:
+                    des_line = des_line[:-1]
+                description += f'\n\t\t{des_line}'
+            description += '\n\t'
+
+            metadata_content = metadata_content.replace('@DESCRIPTION@', description)
 
         elif ebuild.description:
-            metdata_file.write(f'\t<longdescription>\n\t\t{ebuild.description}\n\t'
-                               f'</longdescription>\n')
+            metadata_content = metadata_content.replace('@DESCRIPTION@', f'\n\t\t{ebuild.description}\n\t'
+                                                                         f'</longdescription>\n')
 
+        use_flags = ''
         if ebuild.use_flags:
-            metdata_file.write('\t<use>\n')
             for use_flag in ebuild.use_flags:
                 if use_flag in database['use-descriptions']:
-                    metdata_file.write(f'\t\t<flag name="{use_flag}">{database["use-descriptions"][use_flag]}</flag>\n')
-            metdata_file.write('\t</use>\n')
+                    use_flags += f'\n\t\t<flag name="{use_flag}">{database["use-descriptions"][use_flag]}</flag>'
+            use_flags += '\n\t'
 
-        metdata_file.write('</pkgmetadata>\n')
-        metdata_file.close()
+        metadata_content = metadata_content.replace('@USE@', use_flags)
+
+        ebuild_file = open(f'{ebuild.package.replace(".", "-")}-metadata.xml', 'w')
+        ebuild_file.write(metadata_content)
 
         print_ok(f'File {ebuild.package.replace(".", "-")}-metadata.xml created.')
+
+        if warnings:
+            print_warning('\nThings that may require your attention:\n')
+            for warning in warnings:
+                print_bold(warning)
