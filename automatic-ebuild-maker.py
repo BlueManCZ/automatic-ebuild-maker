@@ -187,7 +187,7 @@ class Ebuild:
 
             if options.license:
                 self.license = options.license
-            elif 'License' in data:
+            elif 'License' in data and data['License'] != 'unknown':
                 self.license = data['License'].replace('v', '-')
             else:
                 warnings.append('Package license is missing.')
