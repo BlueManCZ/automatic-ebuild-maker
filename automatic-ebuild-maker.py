@@ -390,7 +390,10 @@ class Ebuild:
                     lines = desktop.readlines()
                 for line in lines:
                     if 'Exec=' in line:
-                        command = line.replace('Exec=', '').replace('\n', '').split(' ')[0]
+                        if '"' in line:
+                            command = line.split('"')[1]
+                        else:
+                            command = line.replace('Exec=', '').replace('\n', '').split(' ')[0]
                         if len(command.split('/')) > 1:
                             if command[0] == '/':
                                 command = command[1:]
@@ -430,6 +433,7 @@ class Ebuild:
 
     def build_src_uri_string(self):
         pv = '${PV}'
+        p = '${P}'
 
         src_uri_string = ''
 
@@ -443,11 +447,11 @@ class Ebuild:
                 keyword = 'x86'
             if counter == 0:
                 if len(src_uris) == 1:
-                    src_uri_string = f'{url} -> {self.package}-{pv}.{suffix}'
+                    src_uri_string = f'{url} -> {p}.{suffix}'
                 else:
-                    src_uri_string += f'{keyword}? ( {url} -> {self.package}-{pv}-{arch}.{suffix} )'
+                    src_uri_string += f'{keyword}? ( {url} -> {p}-{arch}.{suffix} )'
             else:
-                src_uri_string += f'\n\t{keyword}? ( {url} -> {self.package}-{pv}-{arch}.{suffix} )'
+                src_uri_string += f'\n\t{keyword}? ( {url} -> {p}-{arch}.{suffix} )'
             counter += 1
         return src_uri_string
 
@@ -512,6 +516,7 @@ class Ebuild:
         if not self.native_bin and self.potencial_run_files:
             result += '\n\n'
             exe = self.potencial_run_files[0]
+            print(self.potencial_run_files)
             result += f'\tdosym "/{exe}" "/usr/bin/{ebuild.package}" || die "dosym failed"'
 
         return result
