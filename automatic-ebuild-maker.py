@@ -149,6 +149,7 @@ class Ebuild:
     deprecate_fixes = {'move': [], 'remove': []}
     desktop_files = []
     doc_directory = ''
+    wm_class = ''
     archives_in_doc_directory = []
     potencial_run_files = []
 
@@ -219,6 +220,7 @@ class Ebuild:
             self.update_doc_directory()
             self.update_archives_in_directory(self.doc_directory)
             self.update_potencial_run_files()
+            self.update_wmclass()
             self.update_deprecate_fixes()
             # self.update_use_dependencies()
 
@@ -366,6 +368,9 @@ class Ebuild:
 
     def update_desktop_files(self):
         self.desktop_files = find_files(self.root, '**/*.desktop')
+        for desktop in self.desktop_files:
+            if path.isdir(self.root + '/' + desktop):
+                self.desktop_files.remove(desktop)
         if self.desktop_files:
             self.inherit.append('xdg')
         else:
@@ -418,6 +423,18 @@ class Ebuild:
 
         if not self.native_bin and not self.potencial_run_files:
             warnings.append('No executable files found.')
+
+    def update_wmclass(self):
+        if self.desktop_files:
+            for desktop_file in self.desktop_files:
+                with open(self.root + desktop_file) as desktop:
+                    lines = desktop.readlines()
+                for line in lines:
+                    if 'StartupWMClass=' in line:
+                        if '"' in line:
+                            self.wm_class = line.split('"')[1]
+                        else:
+                            self.wm_class = line.replace('StartupWMClass=', '').replace('\n', '').split(' ')[0]
 
     def update_deprecate_fixes(self):
         for file in database['deprecated-movable']:
@@ -489,6 +506,12 @@ class Ebuild:
             for fix in self.deprecate_fixes['remove']:
                 result += f'\n\trm -rf "{fix}" || die "rm failed"'
             result += '\n'
+
+        if options.wm_class:
+            if self.wm_class:
+                result += '\n\tsed -i "/^StartupWMClass=/{h;s/=.*/=%s/}" "%s" || die "sed failed"\n' % (options.wm_class, self.desktop_files[0])
+            else:
+                result += f'\n\techo "StartupWMClass={options.wm_class}" >> {self.desktop_files[0]}|| echo "sed failed"\n'
         return result
 
     def build_src_install_string(self):
@@ -596,6 +619,9 @@ if __name__ == '__main__':
     parser.add_option('', '--license', dest='license',
                       help='specify ebuild license',
                       metavar='LICENSE')
+    parser.add_option('', '--wm-class', dest='wm_class',
+                      help='specify WM_CLASS of application for .desktop launcher',
+                      metavar='WM_CLASS')
 
     parser.add_option('', '--amd64', action='store_true', dest='amd64',
                       default=False, help='package is available for amd64 <arch>')
