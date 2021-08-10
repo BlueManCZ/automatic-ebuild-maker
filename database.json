@@ -81,6 +81,30 @@
       "vk_swiftshader_icd.json"
     ]
   },
+  "bundled-libraries": {
+    "libbsd.so": "dev-libs/libbsd",
+    "libbsd.so.0": "dev-libs/libbsd",
+    "libbsd.so.0.8.7": "dev-libs/libbsd",
+    "libcom_err.so": "sys-libs/e2fsprogs-libs",
+    "libcom_err.so.2": "sys-libs/e2fsprogs-libs",
+    "libcom_err.so.2.1": "sys-libs/e2fsprogs-libs",
+    "libdbus-1.so.3": "sys-apps/dbus",
+    "libdbus-1.so.3.19.4": "sys-apps/dbus",
+    "libexpat.so": "dev-libs/expat",
+    "libexpat.so.1": "dev-libs/expat",
+    "libexpat.so.1.6.7": "dev-libs/expat",
+    "libfreetype.so": "media-libs/freetype",
+    "libfreetype.so.6": "media-libs/freetype",
+    "libkeyutils.so": "sys-apps/keyutils",
+    "libkeyutils.so.1": "sys-apps/keyutils",
+    "libkeyutils.so.1.5": "sys-apps/keyutils",
+    "libm.so": "sys-libs/glibc",
+    "libm.so.6": "sys-libs/glibc",
+    "libpng16.so": "media-libs/libpng",
+    "libpng16.so.16": "media-libs/libpng",
+    "libz.so": "sys-libs/zlib",
+    "libz.so.1": "sys-libs/zlib"
+  },
   "deprecated-movable": {
     "usr/share/appdata": "usr/share/metainfo"
   },

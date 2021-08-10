@@ -137,7 +137,7 @@ class Ebuild:
     tmp_use_flags = []
     deb_dependencies = []
     dependencies = []
-    use_dependencies = {}
+    normal_dependencies = []
 
     postinst = []
     postrm = []
@@ -146,7 +146,7 @@ class Ebuild:
     native_bin = ''
 
     unnecessary_files = {}
-    deprecate_fixes = {'move': [], 'remove': []}
+    fixes = {'move': [], 'remove': []}
     desktop_files = []
     doc_directory = ''
     wm_class = ''
@@ -221,7 +221,7 @@ class Ebuild:
             self.update_archives_in_directory(self.doc_directory)
             self.update_potencial_run_files()
             self.update_wmclass()
-            self.update_deprecate_fixes()
+            self.update_fixes()
             # self.update_use_dependencies()
 
     def name(self):
@@ -296,7 +296,6 @@ class Ebuild:
     def build_dependencies_string(self):
         dependencies = self.convert_dependencies(self.deb_dependencies)
 
-        normal_dependencies = []
         multi_dependencies = []
         use_dependencies = {}
 
@@ -312,18 +311,18 @@ class Ebuild:
                     use_dependencies[dep[1]] = dep[0]
                     self.add_use_flag(dep[1])
                 else:
-                    normal_dependencies.append(dep[0])
+                    self.normal_dependencies.append(dep[0])
 
         for use in self.tmp_use_flags:
             if use in database['use-dependencies']:
                 use_dependencies[use] = database['use-dependencies'][use]
 
-        normal_dependencies.sort()
+        self.normal_dependencies.sort()
         multi_dependencies.sort()
 
         string = ''
         c = 0
-        for dep in normal_dependencies:
+        for dep in self.normal_dependencies:
             string += ("" if c == 0 else "\n\t") + f'{dep}'
             c += 1
 
@@ -365,6 +364,18 @@ class Ebuild:
                     # tmp.sort()
                     self.unnecessary_files[use] = tmp
                     self.add_use_flag(use)
+
+        bundled_libraries = database['bundled-libraries']
+
+        for library in bundled_libraries:
+            found = find_files(self.root, f'**/{library}')
+
+            if found:
+                if database['bundled-libraries'][library] not in self.normal_dependencies:
+                    self.normal_dependencies.append(database['bundled-libraries'][library])
+
+                for f in found:
+                    self.fixes['remove'].append(f)
 
     def update_desktop_files(self):
         self.desktop_files = find_files(self.root, '**/*.desktop')
@@ -436,17 +447,17 @@ class Ebuild:
                         else:
                             self.wm_class = line.replace('StartupWMClass=', '').replace('\n', '').split(' ')[0]
 
-    def update_deprecate_fixes(self):
+    def update_fixes(self):
         for file in database['deprecated-movable']:
             found = find_files(self.root, file)
             if found:
-                self.deprecate_fixes['move'].append((file, database['deprecated-movable'][file]))
-        self.deprecate_fixes['move'].sort()
+                self.fixes['move'].append((file, database['deprecated-movable'][file]))
+        self.fixes['move'].sort()
 
         for file in database['deprecated-removable']:
             found = find_files(self.root, file)
             if found:
-                self.deprecate_fixes['remove'].append(file)
+                self.fixes['remove'].append(file)
 
     def build_src_uri_string(self):
         pv = '${PV}'
@@ -497,13 +508,13 @@ class Ebuild:
                     result += f'\t\trm -f{"r" if path.isdir(self.root + f) else " "} "{f}" || die "rm failed"\n'
                 result += '\tfi\n'
 
-        if self.deprecate_fixes['move']:
-            for fix in self.deprecate_fixes['move']:
+        if self.fixes['move']:
+            for fix in self.fixes['move']:
                 result += f'\n\tmv "{fix[0]}" "{fix[1]}" || die "mv failed"'
             result += '\n'
 
-        if self.deprecate_fixes['remove']:
-            for fix in self.deprecate_fixes['remove']:
+        if self.fixes['remove']:
+            for fix in self.fixes['remove']:
                 result += f'\n\trm -rf "{fix}" || die "rm failed"'
             result += '\n'
 
