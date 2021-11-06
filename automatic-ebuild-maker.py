@@ -652,12 +652,12 @@ if __name__ == '__main__':
     TEMPLATES_DIR = REAL_PATH + '/templates/'
 
     if not options.url:
-        print_warning('Input file not specifed. Please, use --input flag.')
+        print_warning('Input file not specified. Please, use --url option.')
         quit()
 
     if 'http://' not in options.url and 'https://' not in options.url:
         print('Wrong input %s' % options.url)
-        print_warning('Input file has to be specifed by URL adress.')
+        print_warning('Input file has to be specified by the URL address.')
         quit()
 
     architectures = []
