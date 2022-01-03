@@ -83,9 +83,13 @@ class Deb:
         with open(self.extract_location + '/control/control') as control_file:
             line = control_file.readline()
             while line:
+                if line == "\n":
+                    line = control_file.readline()
+                    continue
                 key, value = line.split(': ', 1)
                 if key == 'Description':
-                    long_description_lines = control_file.readlines()
+                    # long_description_lines = control_file.readlines()
+                    long_description_lines = [value]
                     long_description = ''.join(long_description_lines).replace('  ', '').replace('\n', '')
                     if long_description:
                         data['Long description'] = long_description
@@ -111,6 +115,10 @@ class Deb:
             dependencies += data['Suggests'].split(', ')
             data.pop('Suggests')
         data['Depends'] = dependencies
+
+        for i in range(len(dependencies)):
+            if dependencies[i][-1] == ' ':
+                dependencies[i] = dependencies[i][:-1]
 
         if 'Architecture' in data:
             self.architecture = data['Architecture']

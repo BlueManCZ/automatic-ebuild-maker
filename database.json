@@ -71,7 +71,8 @@
     "sp-auth": "media-libs/sp-auth",
     "trash-cli": "app-misc/trash-cli",
     "vlc": "media-video/vlc",
-    "xdg-utils": "x11-misc/xdg-utils"
+    "xdg-utils": "x11-misc/xdg-utils",
+    "zlib1g": "sys-libs/zlib"
   },
   "dependencies-optional": {
     "libasound2": "alsa",
