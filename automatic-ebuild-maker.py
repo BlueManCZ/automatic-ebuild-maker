@@ -5,7 +5,7 @@ from glob import glob
 from json import load
 from optparse import OptionParser
 from os import mkdir, path
-from re import sub
+from re import compile, fullmatch, sub
 from signal import signal, SIGINT
 from sys import stdout
 from wget import download
@@ -84,33 +84,29 @@ class Deb:
 
         data = {}
         with open(self.extract_location + "/control/control") as control_file:
-            line = control_file.readline()
-            while line:
-                if line == "\n":
-                    line = control_file.readline()
-                    continue
-                key, value = line.split(": ", 1)
-                if key == "Description":
-                    # long_description_lines = control_file.readlines()
-                    long_description_lines = [value]
-                    long_description = (
-                        "".join(long_description_lines)
-                        .replace("  ", "")
-                        .replace("\n", "")
-                    )
-                    if long_description:
-                        data["Long description"] = long_description
-                        data["Long description lines"] = long_description_lines
-                    inline_description = value.replace("\n", "")
-                    if inline_description:
-                        data[key] = inline_description
-                    else:
-                        data[key] = long_description
+            lines = control_file.readlines()
 
+            next_item = ""
+            buffer = []
+
+            for line in lines:
+                line = line.replace("\n", "")
+                if fullmatch(compile(r"\S+:\s.+"), line):
+                    if next_item:
+                        data[next_item] = "".join(buffer)
+                        data[next_item + " lines"] = buffer
+                        next_item = ""
+                        buffer = []
+                    key, value = line.split(": ", 1)
+                    data[key] = value
+                elif fullmatch(compile(r"\S+:\s"), line):
+                    next_item = line.replace(": ", "")
                 else:
-                    data[key] = value.replace("\n", "")
+                    buffer.append(line.replace("  ", ""))
 
-                line = control_file.readline()
+            if next_item:
+                data[next_item] = "".join(buffer)
+                data[next_item + " lines"] = buffer
 
         dependencies = []
         if "Depends" in data:
@@ -142,8 +138,7 @@ class Ebuild:
     eapi = 7
     inherit = []
     description = ""
-    long_description = ""
-    long_description_lines = []
+    description_lines = []
     homepage = ""
     src_uri = {}
     license = ""
@@ -218,13 +213,8 @@ class Ebuild:
             else:
                 warnings.append("Package description is missing.")
 
-            if "Long description" in data:
-                self.long_description = data["Long description"]
-            else:
-                warnings.append("Package long description is missing.")
-
-            if "Long description lines" in data:
-                self.long_description_lines = data["Long description lines"]
+            if "Description lines" in data:
+                self.description_lines = data["Description lines"]
 
             self.root = deb_file.extract_location + "/data/"
 
@@ -867,8 +857,8 @@ if __name__ == "__main__":
 
         description = ""
 
-        if ebuild.long_description_lines:
-            for des_line in ebuild.long_description_lines:
+        if ebuild.description_lines:
+            for des_line in ebuild.description_lines:
                 while des_line[0] == " ":
                     des_line = des_line[1:]
                 while des_line[-1] in [" ", "\n"]:
