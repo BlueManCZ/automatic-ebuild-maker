@@ -110,12 +110,12 @@ class Deb:
 
         dependencies = []
         if "Depends" in data:
-            dependencies += data["Depends"].split(", ")
+            dependencies += data["Depends"].replace(" ", "").split(",")
         if "Recommends" in data:
-            dependencies += data["Recommends"].split(", ")
+            dependencies += data["Recommends"].replace(" ", "").split(",")
             data.pop("Recommends")
         if "Suggests" in data:
-            dependencies += data["Suggests"].split(", ")
+            dependencies += data["Suggests"].replace(" ", "").split(",")
             data.pop("Suggests")
         data["Depends"] = dependencies
 
@@ -168,7 +168,6 @@ class Ebuild:
     deb_data = []
 
     def __init__(self, *_, deb_files: [Deb] = None):
-
         if deb_files:
             # Making ebuild from .deb
 
@@ -204,9 +203,12 @@ class Ebuild:
             if options.license:
                 self.license = options.license
             elif "License" in data and data["License"] != "unknown":
-                self.license = data["License"].replace("v", "-")
+                self.license = data["License"].replace("v", "-").replace("3.0", "3")
             else:
-                warnings.append("Package license is missing.")
+                self.license = "all-rights-reserved"
+                warnings.append(
+                    'Package license is missing. Using "all-rights-reserved".'
+                )
 
             if "Description" in data:
                 self.description = data["Description"]
@@ -263,8 +265,8 @@ class Ebuild:
         deb_dependencies = self.deb_data["Depends"]
         dependencies = []
 
-        def cut_version(depencency):
-            return sub(r" \(.*\)", "", depencency)
+        def cut_version(dependency):
+            return sub(r" \(.*\)", "", dependency)
 
         for dep in deb_dependencies:
             if "|" in dep:
@@ -639,7 +641,6 @@ def find_files(root, pattern, cut_root=True):
 
 
 if __name__ == "__main__":
-
     signal(SIGINT, quit_handler)
 
     parser = OptionParser()
@@ -768,7 +769,6 @@ if __name__ == "__main__":
 
     file_suffix = options.url.split(".")[-1]
     if file_suffix == "deb":
-
         src_uri = {}
 
         if "@ARCH@" in options.url:

@@ -1,5 +1,32 @@
 {
+  "bundled-libraries": {
+    "libbsd.so": "dev-libs/libbsd",
+    "libbsd.so.0": "dev-libs/libbsd",
+    "libbsd.so.0.8.7": "dev-libs/libbsd",
+    "libcom_err.so": "sys-libs/e2fsprogs-libs",
+    "libcom_err.so.2": "sys-libs/e2fsprogs-libs",
+    "libcom_err.so.2.1": "sys-libs/e2fsprogs-libs",
+    "libcrypto.so.1.0.0": "dev-libs/openssl",
+    "libdbus-1.so.3": "sys-apps/dbus",
+    "libdbus-1.so.3.19.4": "sys-apps/dbus",
+    "libexpat.so": "dev-libs/expat",
+    "libexpat.so.1": "dev-libs/expat",
+    "libexpat.so.1.6.7": "dev-libs/expat",
+    "libfreetype.so": "media-libs/freetype",
+    "libfreetype.so.6": "media-libs/freetype",
+    "libkeyutils.so": "sys-apps/keyutils",
+    "libkeyutils.so.1": "sys-apps/keyutils",
+    "libkeyutils.so.1.5": "sys-apps/keyutils",
+    "libm.so": "sys-libs/glibc",
+    "libm.so.6": "sys-libs/glibc",
+    "libpng16.so": "media-libs/libpng",
+    "libpng16.so.16": "media-libs/libpng",
+    "libssl.so.1.0.0": "dev-libs/openssl",
+    "libz.so": "sys-libs/zlib",
+    "libz.so.1": "sys-libs/zlib"
+  },
   "dependencies": {
+    "desktop-file-utils": "dev-util/desktop-file-utils",
     "gconf-service": "gnome-base/gconf:2",
     "gconf2": "gnome-base/gconf:2",
     "gir1.2-gnomekeyring-1.0": "gnome-base/gnome-keyring",
@@ -40,9 +67,13 @@
     "libgstreamer1.0-0": "media-libs/gstreamer",
     "libgtk-3-0": "x11-libs/gtk+:3",
     "libgtk2.0-0": "x11-libs/gtk+:2",
+    "libjpeg8": "virtual/jpeg",
     "libnss3": "dev-libs/nss",
     "libpango-1.0-0": "x11-libs/pango",
     "libpangocairo-1.0-0": "x11-libs/pango",
+    "libpcsclite1": "sys-apps/pcsc-lite",
+    "libpng16-16": "media-libs/libpng",
+    "libproidplus-gui": "app-crypt/libproidplus-gui",
     "libproxy1": "net-libs/libproxy",
     "libproxy1v5": "net-libs/libproxy",
     "libsecret-1-0": "app-crypt/libsecret",
@@ -56,8 +87,10 @@
     "libx11-6": "x11-libs/libX11",
     "libx11-xcb1": "x11-misc/xcb",
     "libxcb-dri3-0": "x11-libs/libxcb",
+    "libxcb-xinerama0": "x11-libs/libxcb",
     "libxcb-xinput0": "x11-libs/libxcb",
     "libxcb1": "x11-libs/libxcb",
+    "libxcursor1": "x11-libs/libXcursor",
     "libxext6": "x11-libs/libXext",
     "libxfixes3": "x11-libs/libXfixes",
     "libxi6": "x11-libs/libXi",
@@ -65,6 +98,7 @@
     "libxrender1": "x11-libs/libXrender",
     "libxss1": "x11-libs/libXScrnSaver",
     "libxtst6": "x11-libs/libXtst",
+    "pcscd": "sys-apps/pcsc-lite",
     "python": "dev-lang/python",
     "python-glade2": "dev-util/glade",
     "python-gobject": "dev-python/pygobject",
@@ -82,6 +116,26 @@
     "libnotify4": "libnotify",
     "pulseaudio": "pulseaudio"
   },
+  "deprecated-movable": {
+    "usr/share/appdata": "usr/share/metainfo"
+  },
+  "deprecated-removable": [
+    "etc/cron.daily"
+  ],
+  "unnecessary-files": {
+    "system-ffmpeg": [
+      "libffmpeg.so"
+    ],
+    "system-mesa": [
+      "swiftshader",
+      "libEGL.so",
+      "libGLESv2.so",
+      "libvk_swiftshader.so",
+      "libvulkan.so",
+      "libvulkan.so.1",
+      "vk_swiftshader_icd.json"
+    ]
+  },
   "use-dependencies": {
     "alsa": "media-libs/alsa-lib",
     "appindicator": "dev-libs/libappindicator",
@@ -98,49 +152,5 @@
   },
   "use-symlinks": {
     "system-ffmpeg": "/usr/\"$(get_libdir)\"/chromium/libffmpeg.so"
-  },
-  "unnecessary-files": {
-    "system-ffmpeg": ["libffmpeg.so"],
-    "system-mesa": [
-      "swiftshader",
-      "libEGL.so",
-      "libGLESv2.so",
-      "libvk_swiftshader.so",
-      "libvulkan.so",
-      "libvulkan.so.1",
-      "vk_swiftshader_icd.json"
-    ]
-  },
-  "bundled-libraries": {
-    "libbsd.so": "dev-libs/libbsd",
-    "libbsd.so.0": "dev-libs/libbsd",
-    "libbsd.so.0.8.7": "dev-libs/libbsd",
-    "libcom_err.so": "sys-libs/e2fsprogs-libs",
-    "libcom_err.so.2": "sys-libs/e2fsprogs-libs",
-    "libcom_err.so.2.1": "sys-libs/e2fsprogs-libs",
-    "libcrypto.so.1.0.0": "dev-libs/openssl",
-    "libdbus-1.so.3": "sys-apps/dbus",
-    "libdbus-1.so.3.19.4": "sys-apps/dbus",
-    "libexpat.so": "dev-libs/expat",
-    "libexpat.so.1": "dev-libs/expat",
-    "libexpat.so.1.6.7": "dev-libs/expat",
-    "libfreetype.so": "media-libs/freetype",
-    "libfreetype.so.6": "media-libs/freetype",
-    "libkeyutils.so": "sys-apps/keyutils",
-    "libkeyutils.so.1": "sys-apps/keyutils",
-    "libkeyutils.so.1.5": "sys-apps/keyutils",
-    "libm.so": "sys-libs/glibc",
-    "libm.so.6": "sys-libs/glibc",
-    "libpng16.so": "media-libs/libpng",
-    "libpng16.so.16": "media-libs/libpng",
-    "libssl.so.1.0.0": "dev-libs/openssl",
-    "libz.so": "sys-libs/zlib",
-    "libz.so.1": "sys-libs/zlib"
-  },
-  "deprecated-movable": {
-    "usr/share/appdata": "usr/share/metainfo"
-  },
-  "deprecated-removable": [
-    "etc/cron.daily"
-  ]
+  }
 }
